@@ -356,6 +356,8 @@ class NNBase(object):
                 # idxtuples (i,j,k,...) are sorted by i, then j, then k, ...
                 # and so will be packed properly in row-major order to match
                 # the old array slice we took.
+                #print 'grad_approx.shape,',grad_approx.shape
+                #print 'grad_computed.shape,',grad_computed.shape
                 grad_approx = grad_approx.reshape(grad_computed.shape)
 
                 ##

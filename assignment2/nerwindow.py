@@ -51,13 +51,14 @@ class WindowMLP(NNBase):
         self.lreg = float(reg)
         self.alpha = alpha # default training rate
 
-        dims[0] = windowsize * wv.shape[1] # input dimension
-        param_dims = dict(W=(dims[1], dims[0]),
-                          b1=(dims[1],),
-                          U=(dims[2], dims[1]),
-                          b2=(dims[2],),
+        #wv.shape: (100232,50)
+        dims[0] = windowsize * wv.shape[1] # input dimension 3*50=150
+        param_dims = dict(W=(dims[1], dims[0]),# W(100,150)
+                          b1=(dims[1],),#b(100)
+                          U=(dims[2], dims[1]),#U(5,100)
+                          b2=(dims[2],),#(5,)
                           )
-        param_dims_sparse = dict(L=wv.shape)
+        param_dims_sparse = dict(L=wv.shape) #L(100232,50)
 
         # initialize parameters: don't change this line
         NNBase.__init__(self, param_dims, param_dims_sparse)
@@ -66,19 +67,15 @@ class WindowMLP(NNBase):
         #### YOUR CODE HERE ####
 
         # any other initialization you need
-        # self.params.<name> for normal parameters
-        # self.sparams.<name> for params with sparse gradients
-        # and get access to normal NumPy arrays
-        self.d = wv.shape[1]         # the dimension of each word vector
-        self.windowsize = windowsize # the number of vector in each window
-        self.sparams.L = wv.copy()  # store own representations
+        self.sparams.L = wv.copy() # store own representations,100232,50 matrix
         self.params.W = random_weight_matrix(*self.params.W.shape)
         self.params.U = random_weight_matrix(*self.params.U.shape)
-        # self.params.b1 = zeros((self.nclass,1)) # done automatically!
-        # self.params.b2 = zeros((self.nclass,1)) # done automatically!
 
+        self.window_size = windowsize#3
+        self.word_vec_size = wv.shape[1]#50
 
         #### END YOUR CODE ####
+
 
 
     def _acc_grads(self, window, label):
@@ -97,34 +94,37 @@ class WindowMLP(NNBase):
         self.sgrads.L[i] = (gradient dJ/dL[i]) # this adds an update for that index
         """
         #### YOUR CODE HERE ####
+
         ##
         # Forward propagation
-        x = self.sparams.L[window].reshape(-1)
-        z1 = self.params.W.dot(x) + self.params.b1  # b1 shape is (dims[1],)
-        h = 2.0*sigmoid(2.0*z1) - 1.0
-        z2 = self.params.U.dot(h) + self.params.b2
-        p = softmax(z2)
-
-        ##
-        # Backpropagation
+        x = hstack([self.sparams.L[idx] for idx in window]) # extract representation,(150,) matrix
+        a =self.params.W.dot(x)+self.params.b1#(100,150)*(150,)+(100,)=>(100,)
+        h = tanh(a)#(100,)
+        p = softmax(self.params.U.dot(h) + self.params.b2)#(5,100)*(100,)+(100,)=>(5,)
+        
         # Compute gradients w.r.t cross-entropy loss
         y = make_onehot(label, len(p))
-        delta2 = p - y
-        delta1 = self.params.U.T.dot(delta2) * (1 - h**2.0)
+        delta = p - y #(5,)
+        ##
+        # Backpropagation
+        # dJ/dh
+        dh = self.params.U.T.dot(delta) #(100,5)*(5,)=>(100,)
+        # dJ/da
+        da = dh * (1-tanh(a)**2)#(100,) right
+        L_updatevalue=self.params.W.T.dot(da)#(150,100)*(100,)=>(150,)
+        
+        # dJ/dU, dJ/db2
+        self.grads.U += outer(delta, h) + self.lreg * self.params.U#(5,100)
+        self.grads.b2 += delta#(5,)
 
-        self.grads.U += outer(delta2, h) + self.lreg * self.params.U
-        self.grads.b2 += delta2
-
-        self.grads.W += outer(delta1, x) + self.lreg * self.params.W
-        self.grads.b1 += delta1
-
-        # self.sgrads.L[window] = self.params.W.T.dot(delta1)
-        # update each word one by one 
-        dL = self.params.W.T.dot(delta1)
-        for i in xrange(len(window)):
-            f = dL[i * self.d : (i + 1) * self.d]
-            self.sgrads.L[window[i]] = f.reshape((self.d,))
-
+        # dJ/dW, dJ/db1
+        self.grads.W += outer(da,x) + self.lreg * self.params.W #(100,)*(150,)+(100,150)=>(100,150)
+        self.grads.b1 += da #(100,)
+        
+        # dJ/dL, sparse update: use sgrads
+        dL = self.params.W.T.dot(da).reshape(self.window_size, self.word_vec_size)#(150,100)*(100,)=>(150,)=>(3,50)
+        for i in xrange(self.window_size):
+            self.sgrads.L[window[i], :] = dL[i]
         #### END YOUR CODE ####
 
 
@@ -144,23 +144,18 @@ class WindowMLP(NNBase):
             windows = [windows]
 
         #### YOUR CODE HERE ####
-        ### Should be processed row by row, because different windows may have common index.
-        ### Although the gradient is correct for one window, may be wrong in minibatch training!
-        ## This is why the softmax is just max(x) rather than max(x, axis=0), in case of processing 
-        ## different data format!
-        # num = len(windows)
-        # windowsize = len(windows[0])
-        P = zeros((len(windows), self.params.U.shape[0]))
-        for i, window in enumerate(windows):
-            # X = self.sparams.L[windows].reshape(windowsize num * self.sparams.L.shape[1], num)
-            X = hstack(self.sparams.L[window])  # (150,)
-            z1 = dot(self.params.W, X) + self.params.b1
-            # z1 = self.params.W.dot(X) + self.params.b1.reshape(self.params.b1.shape[0], 1)
-            h = 2.0*sigmoid(2.0*z1) - 1.0
-            z2 = dot(self.params.U, h) + self.params.b2
-            # z2 = self.params.U.dot(h) + self.params.b2.reshape(self.params.b2.shape[0], 1)
-            P[i, :] = softmax(z2)   # softmax is one-dimensional operation
+        #print 'windows.shape',windows[0]
+        P=[]
+        for window in windows:
+            x = hstack([self.sparams.L[idx] for idx in window]) # extract representation,(150,) matrix
+            #x=reshape(x,(x.shape[0]*x.shape[1]))
+            #print self.params.W.shape,' ',x.shape,' ',self.params.b1.shape
+            a =self.params.W.dot(x)+self.params.b1#(100,150)*(150,)+(100,)=>(100,)
+            h = tanh(a)#(100,)
+            p = softmax(self.params.U.dot(h) + self.params.b2)#(5,100)*(100,)+(100,)=>(5,)
+            P.append(p)
         #### END YOUR CODE ####
+
 
         return P # rows are output for each input
 
@@ -173,10 +168,10 @@ class WindowMLP(NNBase):
         """
 
         #### YOUR CODE HERE ####
-        P = self.predict_proba(windows)  # num examples x numclass
-        c = argmax(P, axis=1)
+        c = argmax(self.predict_proba(windows), axis=1)
         #### END YOUR CODE ####
-        return c.tolist() # list of predicted classes
+        return c # list of predicted classes
+
 
     def compute_loss(self, windows, labels):
         """
@@ -184,29 +179,22 @@ class WindowMLP(NNBase):
         windows = same as for predict_proba
         labels = list of class labels, for each row of windows
         """
-
+        
+        labels_list = None
         #### YOUR CODE HERE ####
-        # handle singleton input by making sure we have
-        # a list-of-lists
-        """
         if not hasattr(windows[0], "__iter__"):
             windows = [windows]
-
-        if type(labels) is not list:
-            labels = [labels]
-        """
-        if not hasattr(windows[0], "__iter__"):
-            windows = [windows]
-            labels = [labels]
+            labels_list = [labels]
         else:
-            labels = labels
+            labels_list = labels
 
-        J = 0.0
-
-        P = self.predict_proba(windows)   # P: num examples x numclass, changed to list
-        J = -sum(log(P[xrange(len(labels)), labels]))
-
-        J += (self.lreg / 2.0) * (sum(self.params.W**2.0) + sum(self.params.U**2.0))
-
+        J = 0
+        for i in xrange(len(windows)):
+            x = hstack(self.sparams.L[windows[i], :]) # extract representation
+            h = tanh(self.params.W.dot(x) + self.params.b1)
+            p = softmax(self.params.U.dot(h) + self.params.b2)
+            J += - log(p[labels_list[i]])
+        Jreg = (self.lreg / 2.0) * (sum(self.params.W**2.0) + sum(self.params.U**2.0))
         #### END YOUR CODE ####
-        return J
+        
+        return J + Jreg

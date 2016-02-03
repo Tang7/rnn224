@@ -29,11 +29,11 @@ class SoftmaxRegression(NNBase):
         # specific model architecture
         # To initialize, give shapes as if to np.array((m,n))
         param_dims = dict(W = (dims[1], dims[0]), # 5x100 matrix
-                          b = (dims[1])) # column vector
+                          b = (dims[1])) # column vector,5
         # These parameters have sparse gradients,
         # which is *much* more efficient if only a row
         # at a time gets updated (e.g. word representations)
-        param_dims_sparse = dict(L=wv.shape)
+        param_dims_sparse = dict(L=wv.shape)# 10*100 matrix
         NNBase.__init__(self, param_dims, param_dims_sparse)
 
         ##
@@ -41,7 +41,7 @@ class SoftmaxRegression(NNBase):
         # self.params.<name> for normal parameters
         # self.sparams.<name> for params with sparse gradients
         # and get access to normal NumPy arrays
-        self.sparams.L = wv.copy() # store own representations
+        self.sparams.L = wv.copy() # store own representations,10*100 matrix
         self.params.W = random_weight_matrix(*self.params.W.shape)
         # self.params.b1 = zeros((self.nclass,1)) # done automatically!
 
@@ -51,19 +51,22 @@ class SoftmaxRegression(NNBase):
         """
         ##
         # Forward propagation
-        x = self.sparams.L[idx] # extract representation
-        p = softmax(self.params.W.dot(x) + self.params.b)
+        
+        x = self.sparams.L[idx] # extract representation,(100 matrix
+        #print self.sparams.L.shape
+        #print x.shape
+        p = softmax(self.params.W.dot(x) + self.params.b) # (5,100)*(100)+(5,)=>(5,)
 
         ##
         # Compute gradients w.r.t cross-entropy loss
         y = make_onehot(label, len(p))
-        delta = p - y
+        delta = p - y #(5,)
         # dJ/dW, dJ/db1
         self.grads.W += outer(delta, x) + self.lreg * self.params.W
         self.grads.b += delta
         # dJ/dL, sparse update: use sgrads
         # this stores an update to the row L[idx]
-        self.sgrads.L[idx] = self.params.W.T.dot(delta)
+        self.sgrads.L[idx] = self.params.W.T.dot(delta)  #(100,5)*(5,)=>(100,)
         # note that the syntax is overloaded here; L[idx] =
         # works like +=, so if you update the same index
         # twice, it'll store *BOTH* updates. For example:
@@ -83,8 +86,8 @@ class SoftmaxRegression(NNBase):
         """
         ##
         # Forward propagation
-        x = self.sparams.L[idx]
-        p = softmax(self.params.W.dot(x) + self.params.b)
+        x = self.sparams.L[idx] #(100,)
+        p = softmax(self.params.W.dot(x) + self.params.b) #(5,100)*(100,)+(5,)=>(5,)
         J = -1*log(p[label]) # cross-entropy loss
         Jreg = (self.lreg / 2.0) * sum(self.params.W**2.0)
         return J + Jreg
@@ -94,7 +97,7 @@ class SoftmaxRegression(NNBase):
         Predict class probabilities.
         """
         x = self.sparams.L[idx]
-        p = softmax(self.params.W.dot(x) + self.params.b)
+        p = softmax(self.params.W.dot(x) + self.params.b)#(5,)
         return p
 
     def predict(self, idx):

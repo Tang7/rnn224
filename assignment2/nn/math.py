@@ -4,8 +4,6 @@ def sigmoid(x):
     return 1.0/(1.0 + exp(-x))
 
 def softmax(x):
-    # xt = numpy.exp(x - numpy.max(x, axis=0))
-    # return xt / numpy.sum(xt, axis=0)
     xt = exp(x - max(x))
     return xt / sum(xt)
 

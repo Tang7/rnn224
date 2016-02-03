@@ -5,7 +5,7 @@ import sys
 
 # Import NN utils
 from nn.base import NNBase
-from nn.math import softmax, sigmoid, make_onehot
+from nn.math import softmax, sigmoid,make_onehot
 from nn.math import MultinomialSampler, multinomial_sample
 from misc import random_weight_matrix
 
@@ -30,35 +30,33 @@ class RNNLM(NNBase):
         bptt : number of backprop timesteps
     """
 
-    def __init__(self, L0, U0=None,
+    def __init__(self, L0, U0=None,#L0=(10,50),U0=(10,50)
                  alpha=0.005, rseed=10, bptt=1):
 
-        self.hdim = L0.shape[1] # word vector dimensions
-        self.vdim = L0.shape[0] # vocab size
-        param_dims = dict(H = (self.hdim, self.hdim),
-                          U = L0.shape)
+        self.hdim = L0.shape[1] # word vector dimensions,50
+        self.vdim = L0.shape[0] # vocab size,10
+        param_dims = dict(H = (self.hdim, self.hdim),#H(50,50)
+                          U = L0.shape)#U(10,50)
         # note that only L gets sparse updates
-        param_dims_sparse = dict(L = L0.shape)
+        param_dims_sparse = dict(L = L0.shape)#L(10,50)
         NNBase.__init__(self, param_dims, param_dims_sparse)
 
         #### YOUR CODE HERE ####
-        random.seed(rseed)
-
-        self.alpha = alpha # learning rate
-        self.bptt = bptt   # recursive time step
-
-
         # Initialize word vectors
         # either copy the passed L0 and U0 (and initialize in your notebook)
         # or initialize with gaussian noise here
-        self.sparams.L = L0.copy()
-        if U0 == None :
-            self.params.U = random_weight_matrix(self.vdim, self.hdim)
+        self.sparams.L = L0.copy()#(10,50)
+        if U0 is None:
+            self.params.U = random.normal(0, 0.1, self.params.U.shape)
         else:
-            self.params.U = U0.copy()
-        # self.params.U = random_weight_matrix(self.vdim, self.hdim)
+            self.params.U = U0.copy()#(10,50)
         # Initialize H matrix, as with W and U in part 1
-        self.params.H = random_weight_matrix(self.hdim, self.hdim)
+        self.params.H = random_weight_matrix(*self.params.H.shape)#(50,50)
+
+
+        self.alpha = alpha
+        self.bptt = bptt
+
         #### END YOUR CODE ####
 
 
@@ -94,37 +92,46 @@ class RNNLM(NNBase):
         """
 
         # Expect xs as list of indices
-        ns = len(xs)
+        ns = len(xs)#ns=3
 
         # make matrix here of corresponding h(t)
         # hs[-1] = initial hidden state (zeros)
-        hs = zeros((ns+1, self.hdim))
+        hs = zeros((ns+1, self.hdim))#(4,50)
         # predicted probas
-        ps = zeros((ns, self.vdim))
+        ps = zeros((ns, self.vdim))#(3,10)
 
         #### YOUR CODE HERE ####
 
         ##
         # Forward propagation
+        #print ns           3
+        #print hs.shape     (4,50)
+        #print ps.shape     (3,10)
+        #print self.bptt    3
+        ##
+        # Forward propagation
         for t in xrange(ns):
-            hs[t] = sigmoid(dot(self.params.H, hs[t-1]) + self.sparams.L[xs[t]])
-            ps[t] = softmax(dot(self.params.U, hs[t]))
+            hs[t] = sigmoid(self.params.H.dot(hs[t - 1]) + self.sparams.L[xs[t]])#(Dh,Dh)*(Dh,)+(Dh,)
+            ps[t] = softmax(self.params.U.dot(hs[t]))#(V,Dh)*(Dh,)
+        ##
 
         ##
         # Backward propagation through time
-        for j in xrange(ns):
-            y = make_onehot(ys[j], self.vdim)
-            error = ps[j] - y
-            self.grads.U += outer(error, hs[j])
-            delta_h = dot(self.params.U.T, error) * hs[j] * (1.0-hs[j]) # input error for h[j]
-
-            # start at j and go back self.bptt times
-            for t in xrange(j, j-self.bptt-1, -1):
-                if t >= 0:  # including t=0 timestep
-                    self.grads.H += outer(delta_h, hs[t-1])
-                    self.sgrads.L[xs[t]] = delta_h
-                    delta_h = dot(self.params.H.T, delta_h) * hs[t-1] * (1.0-hs[t-1])
-
+        for t in xrange(ns):
+            y_t = make_onehot(ys[t], self.vdim)
+            delta_t = ps[t] - y_t#(V,)
+            self.grads.U += outer(delta_t, hs[t])#+=(V,)outer(Dh,)=>(V,Dh)
+            #delta:loss gradients on sigmoid
+            delta = self.params.U.T.dot(delta_t) * hs[t] * (1 - hs[t])#(Dh,V)dot(V,)*(Dh,)*(Dh,)=>(Dh,)
+            for i in xrange(t, t - self.bptt - 1, -1):#assume i=4,xrange(4,0,-1),[4,3,2,1]
+                if i - 1 > -1:
+                    self.grads.H += outer(delta, hs[i - 1])#(Dh,)outer(V,)=>(Dh,V)
+                    self.sgrads.L[xs[i]] = delta#(Dh,)
+                    #delta_h:loss gradients on h(i-1)
+                    delta_h=dot(self.params.H.T,delta)#(Dh,Dh)(Dh,)=>(Dh,)
+                    #delta:loss gradients on sigmoid(i-1)
+                    delta = delta_h * hs[i - 1] * (1 - hs[i - 1])#() 
+            
 
         #### END YOUR CODE ####
 
@@ -158,16 +165,19 @@ class RNNLM(NNBase):
         and return the sum of the point losses.
         """
 
-        J = 0.0
+        J = 0
         #### YOUR CODE HERE ####
         ns = len(xs)
         hs = zeros((ns+1, self.hdim))
-
+        ps = zeros((ns, self.vdim))#(3,10)
+        # Forward propagation
         for t in xrange(ns):
-            hs[t] = sigmoid(dot(self.params.H, hs[t-1]) + self.sparams.L[xs[t]])
-            prob = softmax(dot(self.params.U, hs[t]))
-            J -= log(prob[ys[t]])
-
+            hs[t] = sigmoid(self.params.H.dot(hs[t - 1]) + self.sparams.L[xs[t]])#(Dh,Dh)*(Dh,)+(Dh,)
+            ps[t] = softmax(self.params.U.dot(hs[t]))#(V,Dh)*(Dh,)
+            J += - log(ps[t][ys[t]])
+            #print ps[t]
+            #print [ys[t]]
+            #J += -ys[t]*log(ps[t])
         #### END YOUR CODE ####
         return J
 
@@ -225,18 +235,18 @@ class RNNLM(NNBase):
         ys = [init] # emitted sequence
 
         #### YOUR CODE HERE ####
-        hs = zeros((maxlen+1, self.hdim))
-
+        ns = maxlen
+        hs = zeros((ns+1, self.hdim))
+        # predicted probas
+        ps = zeros((ns, self.vdim))
         for t in xrange(maxlen):
-            hs[t] = sigmoid(dot(self.params.H, hs[t-1]) + self.sparams.L[ys[t]])
-            prob = softmax(dot(self.params.U, hs[t]))
-            index = multinomial_sample(p)
-            ys.append(index)
-            J -= log(y_hat[index])
-            if y_index == end:
+            hs[t] = sigmoid(self.params.H.dot(hs[t - 1]) + self.sparams.L[ys[t]])
+            ps = softmax(self.params.U.dot(hs[t]))
+            y = multinomial_sample(ps)
+            ys.append(y)
+            J += - log(ps[y])
+            if y == end:
                 break
-
-
         #### YOUR CODE HERE ####
         return ys, J
 
